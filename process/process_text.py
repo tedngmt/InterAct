@@ -5,7 +5,7 @@ import re
 import spacy
 import codecs as cs
 
-datasets = ['behave', 'intercap',  'grab', ]
+datasets = os.environ.get('INTERACT_DATASETS', 'grab').split(',')
 
 data_root = './data'
 
@@ -96,6 +96,9 @@ for dataset in datasets:
     
     sequence_folder = os.path.join(dataset_path, 'sequences')
     sequence_seg_folder = os.path.join(dataset_path, 'sequences_seg')
+    if not os.path.isdir(sequence_folder):
+        print(f"Skip dataset {dataset}: missing sequences folder.")
+        continue
     os.makedirs(sequence_seg_folder, exist_ok=True)
 
     text_df_1 = pd.read_csv(text_path_1)

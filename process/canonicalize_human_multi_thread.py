@@ -174,19 +174,37 @@ def _prepare_betas_for_model(betas, smpl_model):
         betas_arr = np.pad(betas_arr, (0, target_betas - betas_arr.shape[0]), mode='constant')
     return betas_arr.astype(np.float32)
 
+class _LazyBodyModels(dict):
+    """Body models built on first use.
+
+    The module-level model zoo below covers every dataset InterAct supports, but
+    a run usually touches only one of them.  Building each model eagerly forces
+    every user to download every model family (e.g. the AMASS extended SMPL+H)
+    even when the dataset being processed never uses it.  Entries are therefore
+    constructed on first lookup, so a missing model file only raises for the
+    datasets that actually need it.
+    """
+
+    def __init__(self, factories):
+        super().__init__()
+        self._factories = factories
+
+    def __missing__(self, key):
+        model = self._factories[key]()
+        self[key] = model
+        return model
+
 ######################################## smplh 10 ########################################
-smplh_model_male = smplx.create(MODEL_PATH, model_type='smplh',
+smplh10 = _LazyBodyModels({
+    'male': lambda: smplx.create(MODEL_PATH, model_type='smplh',
                         gender="male",
                         use_pca=False,
-                        ext='pkl')
-
-smplh_model_female = smplx.create(MODEL_PATH, model_type='smplh',
+                        ext='pkl'),
+    'female': lambda: smplx.create(MODEL_PATH, model_type='smplh',
                         gender="female",
                         use_pca=False,
-                        ext='pkl')
-
-
-smplh10 = {'male': smplh_model_male, 'female': smplh_model_female}
+                        ext='pkl'),
+})
 ######################################## smplx 10 ########################################
 smplx_model_male = smplx.create(MODEL_PATH, model_type='smplx',
                         gender = 'male',
@@ -235,22 +253,23 @@ num_dmpls = None
 num_expressions = None
 num_betas = 16 
 
-smplh16_model_male = BodyModel(bm_fname=surface_model_male_fname,
+smplh16 = _LazyBodyModels({
+    'male': lambda: BodyModel(bm_fname=os.path.join(SMPLH_PATH, 'male', "model.npz"),
                 num_betas=num_betas,
                 num_expressions=num_expressions,
                 num_dmpls=num_dmpls,
-                dmpl_fname=dmpl_fname)
-smplh16_model_female = BodyModel(bm_fname=surface_model_female_fname,
+                dmpl_fname=dmpl_fname),
+    'female': lambda: BodyModel(bm_fname=os.path.join(SMPLH_PATH, "female", "model.npz"),
                 num_betas=num_betas,
                 num_expressions=num_expressions,
                 num_dmpls=num_dmpls,
-                dmpl_fname=dmpl_fname)
-smplh16_model_neutral = BodyModel(bm_fname=surface_model_neutral_fname,
+                dmpl_fname=dmpl_fname),
+    'neutral': lambda: BodyModel(bm_fname=os.path.join(SMPLH_PATH, "neutral", "model.npz"),
                 num_betas=num_betas,
                 num_expressions=num_expressions,
                 num_dmpls=num_dmpls,
-                dmpl_fname=dmpl_fname)
-smplh16 = {'male': smplh16_model_male, 'female': smplh16_model_female, 'neutral': smplh16_model_neutral}
+                dmpl_fname=dmpl_fname),
+})
 ######################################## smplx 16 ########################################
 SMPLX_PATH = MODEL_PATH+'/smplx'
 surface_model_male_fname = os.path.join(SMPLX_PATH,"SMPLX_MALE.npz")
@@ -601,6 +620,9 @@ def process_dataset(dataset, dataset_path):
     MOTION_PATH = os.path.join(dataset_path, 'sequences_seg')
     NEW_MOTION_PATH = os.path.join(dataset_path, 'sequences_canonical')
     OBJECT_PATH = os.path.join(dataset_path, 'objects')
+    if not os.path.isdir(MOTION_PATH):
+        print(f"Skip dataset {dataset}: missing sequences_seg folder.")
+        return
     data_name = os.listdir(MOTION_PATH)
 
     # Initialize progress bar for this dataset
@@ -621,7 +643,7 @@ def process_dataset(dataset, dataset_path):
                     print(f"Error in thread: {e}")
 
 if __name__ == "__main__":
-    datasets = ['behave', 'intercap', 'omomo', 'grab', 'arctic', 'parahome']
+    datasets = os.environ.get('INTERACT_DATASETS', 'grab').split(',')
     data_root = './data'
     
     # Process each dataset concurrently using threads

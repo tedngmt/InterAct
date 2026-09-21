@@ -1,0 +1,18 @@
+# Normalize line endings: LF in the repo and in the working tree.
+* text=auto eol=lf
+
+# Never touch binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.npz binary
+*.npy binary
+*.pkl binary
+*.pt binary
+*.pth binary
+*.obj binary
+*.ply binary
+*.bvh binary
+*.zip binary
+*.tar binary

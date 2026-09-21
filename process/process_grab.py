@@ -102,9 +102,13 @@ for sub_id in ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10']:
             v_template = sbj_vtemp,
             batch_size=T).cuda()
         sbj_parms = params2torch(seq_data.body.params)
-        smplx_output = smpl_model(**sbj_parms)
+        with torch.no_grad():
+            smplx_output = smpl_model(**sbj_parms)
 
         pelvis = to_cpu(smplx_output.joints)[:, 0, :]
+        # Release the first forward pass before running the second one below;
+        # both hold (T, 10475, 3) vertex tensors and T can exceed 4000 frames.
+        del smplx_output
         rotvecs = to_cpu(sbj_parms['global_orient'])
         rotations = Rotation.from_rotvec(rotvecs)
         rotation_matrix_x = Rotation.from_euler('x', -np.pi/2, degrees=False)
@@ -132,9 +136,11 @@ for sub_id in ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10']:
 
 
 
-        smplx_output = smpl_model(**sbj_parms)
+        with torch.no_grad():
+            smplx_output = smpl_model(**sbj_parms)
         verts = to_cpu(smplx_output.vertices) 
         pelvis = to_cpu(smplx_output.joints)[:, 0, :]
+        del smplx_output
         faces = smpl_model.faces
         obj_trans = pelvis + obj_trans_delta
         mesh_obj = trimesh.load(os.path.join(OBJECT_PATH, f"{obj_name}/{obj_name}.obj"), force='mesh')

@@ -14,7 +14,7 @@ if __name__ == "__main__":
     bps_obj = np.load('assets/bps_basis_set_1024_1.npy')
     bps_obj = torch.from_numpy(bps_obj).float().cuda()
    
-    datasets = ['behave', 'intercap', 'grab', 'omomo',]
+    datasets = os.environ.get('INTERACT_DATASETS', 'grab').split(',')
     data_root = 'data'
     for dataset in datasets:
         print(f'Loading {dataset} ...')
@@ -23,7 +23,10 @@ if __name__ == "__main__":
         MOTION_PATH = os.path.join(dataset_path, 'sequences_canonical')
         OBJECT_PATH = os.path.join(dataset_path, 'objects')
         OBJECT_BPS_PATH = os.path.join(dataset_path, 'objects_bps')
-        
+        if not os.path.isdir(OBJECT_PATH):
+            print(f"Skip dataset {dataset}: missing objects folder.")
+            continue
+
         os.makedirs(OBJECT_BPS_PATH, exist_ok=True)  # create folder if not exist
         data_name = os.listdir(OBJECT_PATH)
         for k, name in tqdm(enumerate(data_name)):

@@ -17,23 +17,37 @@ to_cpu = lambda tensor: tensor.detach().cpu()
 
 MODEL_PATH = './models'
 
+class _LazyBodyModels(dict):
+    """Body models built on first use.
+
+    The module-level model zoo below covers every dataset InterAct supports, but
+    a run usually touches only one of them.  Building each model eagerly forces
+    every user to download every model family (e.g. the AMASS extended SMPL+H)
+    even when the dataset being processed never uses it.  Entries are therefore
+    constructed on first lookup, so a missing model file only raises for the
+    datasets that actually need it.
+    """
+
+    def __init__(self, factories):
+        super().__init__()
+        self._factories = factories
+
+    def __missing__(self, key):
+        model = self._factories[key]()
+        self[key] = model
+        return model
+
 ######################################## smplh 10 ########################################
-smplh_model_male = smplx.create(MODEL_PATH, model_type='smplh',
+smplh10 = _LazyBodyModels({
+    'male': lambda: smplx.create(MODEL_PATH, model_type='smplh',
                         gender="male",
                         use_pca=False,
-                        ext='pkl')
-
-smplh_model_female = smplx.create(MODEL_PATH, model_type='smplh',
+                        ext='pkl'),
+    'female': lambda: smplx.create(MODEL_PATH, model_type='smplh',
                         gender="female",
                         use_pca=False,
-                        ext='pkl')
-
-smplh_model_neutral = smplx.create(MODEL_PATH, model_type='smplh',
-                        gender="neutral",
-                        use_pca=False,
-                        ext='pkl')
-
-smplh10 = {'male': smplh_model_male, 'female': smplh_model_female, 'neutral': smplh_model_neutral}
+                        ext='pkl'),
+})
 ######################################## smplx 10 ########################################
 smplx_model_male = smplx.create(MODEL_PATH, model_type='smplx',
                         gender = 'male',
@@ -82,22 +96,23 @@ num_dmpls = None
 num_expressions = None
 num_betas = 16 
 
-smplh16_model_male = BodyModel(bm_fname=surface_model_male_fname,
+smplh16 = _LazyBodyModels({
+    'male': lambda: BodyModel(bm_fname=os.path.join(SMPLH_PATH, 'male', "model.npz"),
                 num_betas=num_betas,
                 num_expressions=num_expressions,
                 num_dmpls=num_dmpls,
-                dmpl_fname=dmpl_fname)
-smplh16_model_female = BodyModel(bm_fname=surface_model_female_fname,
+                dmpl_fname=dmpl_fname),
+    'female': lambda: BodyModel(bm_fname=os.path.join(SMPLH_PATH, "female", "model.npz"),
                 num_betas=num_betas,
                 num_expressions=num_expressions,
                 num_dmpls=num_dmpls,
-                dmpl_fname=dmpl_fname)
-smplh16_model_neutral = BodyModel(bm_fname=surface_model_neutral_fname,
+                dmpl_fname=dmpl_fname),
+    'neutral': lambda: BodyModel(bm_fname=os.path.join(SMPLH_PATH, "neutral", "model.npz"),
                 num_betas=num_betas,
                 num_expressions=num_expressions,
                 num_dmpls=num_dmpls,
-                dmpl_fname=dmpl_fname)
-smplh16 = {'male': smplh16_model_male, 'female': smplh16_model_female, 'neutral': smplh16_model_neutral}
+                dmpl_fname=dmpl_fname),
+})
 ######################################## smplx 16 ########################################
 SMPLX_PATH = MODEL_PATH+'/smplx'
 surface_model_male_fname = os.path.join(SMPLX_PATH,"SMPLX_MALE.npz")
@@ -562,7 +577,7 @@ if __name__ == "__main__":
     all_clips = 0
     all_frames = 0
     fid_r, fid_l = [61, 52, 53, 40, 34, 49, 40], [29, 30, 18, 19, 7, 2, 15]
-    datasets = ['behave','intercap', 'grab', 'omomo']
+    datasets = os.environ.get('INTERACT_DATASETS', 'grab').split(',')
     data_root = './data'
     for dataset in datasets:
         print(f'Loading {dataset} ...')
@@ -570,6 +585,9 @@ if __name__ == "__main__":
         dataset_path = os.path.join(data_root, dataset)
         MOTION_PATH = os.path.join(dataset_path, 'sequences_canonical')
         OBJECT_PATH = os.path.join(data_root, dataset, 'objects')
+        if not os.path.isdir(MOTION_PATH):
+            print(f"Skip dataset {dataset}: missing sequences_canonical folder.")
+            continue
         data_name = os.listdir(MOTION_PATH)
         for k, name in tqdm(enumerate(data_name)):
             

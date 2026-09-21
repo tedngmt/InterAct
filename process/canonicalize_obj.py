@@ -106,7 +106,7 @@ def canonicalize_mesh_and_get_center(mesh_path, mesh_center_cache):
     return center
 
 if __name__ == "__main__":
-    datasets = ['behave', 'intercap', 'grab', 'omomo', 'arctic', 'parahome']
+    datasets = os.environ.get('INTERACT_DATASETS', 'grab').split(',')
     data_root = './data'
     for dataset in datasets:
         print("Processing dataset:", dataset)
