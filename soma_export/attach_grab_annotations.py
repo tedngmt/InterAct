@@ -5,8 +5,11 @@ all 1,335 GRAB sequences, but no natural-language descriptions — it only deriv
 a coarse ``motion_intent`` from the filename.  InterAct supplies three phrasings
 per sequence (natural / change / shorten) plus an action label.
 
-GRAB sequences are never split (the annotation CSVs carry no segment timings),
-so this is a 1:1 join keyed on ``(subject, sequence)``.
+The annotation CSVs hold exactly one description set per whole GRAB sequence,
+so this is a 1:1 join keyed on ``(subject, sequence)``.  (InterAct's own
+pipeline additionally splits 10 of the 1,335 sequences into 2-3 sub-clips for
+training; that segmentation does not apply here, since the SOMA package stores
+whole sequences.)
 
 Annotations are written as a **sidecar** tree next to ``motions/`` rather than
 into the ``.npz`` files, so every motion file stays byte-identical and the
@@ -201,9 +204,11 @@ def main():
         'packageSequences': len(package_keys),
         'unannotatedSequences': missing,
         'layout': 'annotations/<subject>/<sequence>.json, 1:1 with motions/<subject>/<sequence>.npz',
-        'note': ('GRAB sequences are not segmented: the InterAct annotation CSVs carry no '
-                 'segment timings, so each description covers its whole sequence. '
-                 'Motion .npz files are untouched, so the package SHA-256 reports remain valid.'),
+        'note': ('Each annotation covers one whole GRAB sequence: the CSVs hold a single '
+                 'description set per sequence. InterAct splits 10 of the 1,335 sequences into '
+                 'sub-clips for training, but that does not apply here because the SOMA package '
+                 'stores whole sequences. Motion .npz files are untouched, so the package '
+                 'SHA-256 reports remain valid.'),
     }
     with open(os.path.join(out_root, 'manifest.json'), 'w', encoding='utf-8') as fh:
         json.dump(manifest, fh, ensure_ascii=False, indent=2)
