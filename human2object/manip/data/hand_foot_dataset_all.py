@@ -59,8 +59,7 @@ class MarkerManipDataset(Dataset):
         min_max_mean_std_data_path = os.path.join(data_root_folder, f"{prefix}joints_min_max_mean_std_data_window_"+str(self.window)+".p")
 
         # corrected_data=False, use_all_data=True
-        self.datasets = ['behave', 'intercap', 'neuraldome', 'grab', 'chairs', 'omomo', 'imhd']
-        self.datasets = ['behave'] # for debug
+        self.datasets = os.environ.get('INTERACT_DATASETS', 'grab').split(',')
 
         self.prep_bps_data()
         self.window_data_dict, self.s_idx = {}, 0

@@ -1,5 +1,6 @@
 import argparse
 import os
+import signal
 import numpy as np
 import yaml
 from pathlib import Path
@@ -24,6 +25,11 @@ def cycle(dl):
     while True:
         for data in dl:
             yield data
+
+
+# DataLoader workers each hold a copy of the in-memory window dict, which is
+# the dominant memory cost on small-RAM machines. Override with INTERACT_NUM_WORKERS.
+_NUM_WORKERS = int(os.environ.get("INTERACT_NUM_WORKERS", "8"))
 
 
 class Trainer(object):
@@ -119,7 +125,7 @@ class Trainer(object):
                 split_train_val=self.opt.split_train_val)
             self.ds = train_dataset
             self.dl = cycle(data.DataLoader(self.ds, batch_size=self.batch_size,
-                shuffle=True, pin_memory=True, num_workers=8))
+                shuffle=True, pin_memory=True, num_workers=_NUM_WORKERS))
 
         print("Loading val dataset...")
         val_dataset = MarkerManipDataset(train=False, data_root_folder=self.data_root_folder,
@@ -128,7 +134,30 @@ class Trainer(object):
             split_train_val=self.opt.split_train_val)
         self.val_ds = val_dataset
         self.val_dl = cycle(data.DataLoader(self.val_ds, batch_size=1, # change back to self.batch_size
-            shuffle=True, pin_memory=True, num_workers=8, drop_last=True))
+            shuffle=True, pin_memory=True, num_workers=_NUM_WORKERS, drop_last=True))
+
+    def _install_pause_handler(self):
+        """Save-and-exit on SIGINT/SIGTERM instead of losing the current step.
+
+        Checkpoints are otherwise only written every ``save_and_sample_every``
+        steps, so an interrupt could discard hours of work. The handler only
+        raises a flag; the actual save happens between steps so the checkpoint
+        is never written mid-update.
+        """
+        self._stop_requested = False
+
+        def _request_stop(signum, _frame):
+            if self._stop_requested:   # second signal: give up immediately
+                raise KeyboardInterrupt
+            self._stop_requested = True
+            print(f"\nSignal {signum} received - saving checkpoint at the next "
+                  f"step boundary. Send again to abort without saving.", flush=True)
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, _request_stop)
+            except (ValueError, OSError):
+                pass   # not in the main thread; autosave still applies
 
     def save(self, milestone):
         data = {
@@ -176,6 +205,8 @@ class Trainer(object):
         return data, ori_data_cond
 
     def train(self):
+        self._install_pause_handler()
+        self.autosave_every = getattr(self.opt, "autosave_every", 0)
         init_step = self.step
         for idx in range(init_step, self.train_num_steps):
             self.optimizer.zero_grad()
@@ -278,6 +309,16 @@ class Trainer(object):
 
             self.step += 1
 
+            # Rolling checkpoint: overwrites model-last.pt, so resume
+            # granularity is autosave_every rather than save_and_sample_every.
+            if self.autosave_every and self.step % self.autosave_every == 0:
+                self.save("last")
+
+            if self._stop_requested:
+                path = self.save("last")
+                print(f"Paused at step {self.step}; checkpoint: {path}", flush=True)
+                return
+
         print('training complete')
 
         if self.use_wandb:
@@ -362,7 +403,7 @@ class Trainer(object):
         bs = 32 if self.for_quant_eval else 1
         test_loader = torch.utils.data.DataLoader(
             self.val_ds, batch_size=bs, shuffle=False,
-            num_workers=8, pin_memory=True, drop_last=False)
+            num_workers=_NUM_WORKERS, pin_memory=True, drop_last=False)
 
         num_samples_per_seq = 5 if self.for_quant_eval else 1
 
@@ -577,6 +618,8 @@ def parse_opt():
     parser.add_argument('--bps_dim', default=1024, type=int, choices=[1024, 256])
     parser.add_argument('--milestone', default=None, type=str)
     parser.add_argument('--save_and_sample_every', default=10000, type=int)
+    parser.add_argument('--autosave_every', default=500, type=int,
+                        help='steps between rolling model-last.pt saves; 0 disables')
 
     parser.add_argument('--w_humanContactDist', default=None, type=float)
 

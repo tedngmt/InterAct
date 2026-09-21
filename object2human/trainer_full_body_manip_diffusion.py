@@ -1,5 +1,6 @@
 import argparse
 import os
+import signal
 import numpy as np
 import yaml
 import random
@@ -38,6 +39,11 @@ def cycle(dl):
             yield data
 
 from PIL import Image, ImageSequence
+
+# DataLoader workers each hold a copy of the in-memory window dict, which is
+# the dominant memory cost on small-RAM machines. Override with INTERACT_NUM_WORKERS.
+_NUM_WORKERS = int(os.environ.get("INTERACT_NUM_WORKERS", "8"))
+
 
 class Trainer(object):
     def __init__(
@@ -133,15 +139,38 @@ class Trainer(object):
                 window=window_size, use_object_splits=self.use_object_split, load_num=load_num, use_all_data=self.opt.use_all_data, bps_dim=bps_dim, corrected_data=correct_data)
             self.ds = train_dataset 
             self.dl = cycle(data.DataLoader(self.ds, batch_size=self.batch_size, \
-                shuffle=True, pin_memory=True, num_workers=8))
+                shuffle=True, pin_memory=True, num_workers=_NUM_WORKERS))
 
         print("Loading val dataset...")
         val_dataset = MarkerManipDataset(train=False, data_root_folder=self.data_root_folder, \
             window=window_size, use_object_splits=self.use_object_split, load_num=load_num, use_all_data=self.opt.use_all_data, bps_dim=bps_dim, corrected_data=correct_data)        
         self.val_ds = val_dataset
         self.val_dl = cycle(data.DataLoader(self.val_ds, batch_size=self.batch_size, \
-            shuffle=True, pin_memory=True, num_workers=8, drop_last=True))
+            shuffle=True, pin_memory=True, num_workers=_NUM_WORKERS, drop_last=True))
         self.viz_batch = next(self.val_dl)
+
+    def _install_pause_handler(self):
+        """Save-and-exit on SIGINT/SIGTERM instead of losing the current step.
+
+        Checkpoints are otherwise only written every ``save_and_sample_every``
+        steps, so an interrupt could discard hours of work. The handler only
+        raises a flag; the actual save happens between steps so the checkpoint
+        is never written mid-update.
+        """
+        self._stop_requested = False
+
+        def _request_stop(signum, _frame):
+            if self._stop_requested:   # second signal: give up immediately
+                raise KeyboardInterrupt
+            self._stop_requested = True
+            print(f"\nSignal {signum} received - saving checkpoint at the next "
+                  f"step boundary. Send again to abort without saving.", flush=True)
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, _request_stop)
+            except (ValueError, OSError):
+                pass   # not in the main thread; autosave still applies
 
     def save(self, milestone):
         data = {
@@ -190,6 +219,8 @@ class Trainer(object):
         return data, ori_data_cond
 
     def train(self):
+        self._install_pause_handler()
+        self.autosave_every = getattr(self.opt, "autosave_every", 0)
         init_step = self.step 
         for idx in range(init_step, self.train_num_steps):
             self.optimizer.zero_grad()
@@ -293,7 +324,23 @@ class Trainer(object):
                             for key in val_loss_diffusion:
                                 wandb.log({"Validation/Loss/"+key: val_loss_diffusion[key].item()}, step=self.step)
 
+            # Milestone checkpoints. Upstream object2human omitted this entirely,
+            # so training wrote nothing and --milestone had no weights to load.
+            milestone = self.step // self.save_and_sample_every
+            if self.step != 0 and self.step % self.save_and_sample_every == 0:
+                self.save(milestone)
+
             self.step += 1
+
+            # Rolling checkpoint: overwrites model-last.pt, so resume
+            # granularity is autosave_every rather than save_and_sample_every.
+            if self.autosave_every and self.step % self.autosave_every == 0:
+                self.save("last")
+
+            if self._stop_requested:
+                path = self.save("last")
+                print(f"Paused at step {self.step}; checkpoint: {path}", flush=True)
+                return
 
         print('training complete')
 
@@ -330,13 +377,13 @@ class Trainer(object):
         if self.test_on_train:
             test_loader = torch.utils.data.DataLoader(
                 self.ds, batch_size=bs, shuffle=False,
-                num_workers=8, pin_memory=True, drop_last=False) 
+                num_workers=_NUM_WORKERS, pin_memory=True, drop_last=False) 
         else:
             test_loader = torch.utils.data.DataLoader(
                 self.val_ds, batch_size=bs,
                 shuffle=False,
                 # shuffle=True,
-                num_workers=8, pin_memory=True, drop_last=False)
+                num_workers=_NUM_WORKERS, pin_memory=True, drop_last=False)
         
         if self.for_quant_eval:
             num_samples_per_seq = 10
@@ -639,6 +686,8 @@ def parse_opt():
     parser.add_argument('--bps_dim', default=1024, type=int, choices=[1024, 256], help='bps dim')
     parser.add_argument('--milestone', default=None, type=str, help='milestone for testing')
     parser.add_argument('--save_and_sample_every', default=10000, type=int)
+    parser.add_argument('--autosave_every', default=500, type=int,
+                        help='steps between rolling model-last.pt saves; 0 disables')
     parser.add_argument('--correct_data', default=False, action='store_true')
     parser.add_argument('--w_contactLabel', default=None, type=float)
     parser.add_argument('--w_contactDist', default=None, type=float)

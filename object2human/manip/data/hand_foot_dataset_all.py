@@ -68,17 +68,10 @@ class MarkerManipDataset(Dataset):
         prefix = "alldata_" if use_all_data else ""
         min_max_mean_std_data_path = os.path.join(data_root_folder, f"{prefix}joints_min_max_mean_std_data_window_"+str(self.window)+".p")
 
-        if not corrected_data:
-            if use_all_data:
-                self.datasets = ['behave', 'intercap', 'neuraldome', 'grab', 'chairs', 'omomo', 'imhd']
-            else:
-                self.datasets = ['omomo']
-        else:
+        default = 'grab' if not corrected_data else 'grab'
+        self.datasets = os.environ.get('INTERACT_DATASETS', default).split(',')
+        if corrected_data:
             print("Using corrected data")
-            if use_all_data:
-                self.datasets = ['behave_correct', 'intercap_correct', 'neuraldome', 'grab', 'chairs', 'omomo_correct', 'imhd']
-            else:
-                self.datasets = ['omomo_correct']
 
         self.prep_bps_data()
         self.window_data_dict, self.s_idx = {}, 0
